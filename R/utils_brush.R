@@ -13,6 +13,8 @@
 #' \item{\code{closed}:}{A logical scalar specifying whether the lasso is closed.}
 #' \item{\code{panelvar1}, \code{panelvar2}:}{Strings specifying the facet on which the lasso occurs.}
 #' \item{\code{mapping}:}{A list containing further information about the variables used on the x- and y-axes and for faceting.}
+#' \item{\code{css}:}{A numeric matrix of lasso waypoint coordinates in terms of the pixels.
+#' Each row corresponds to a waypoint in \code{coord}.}
 #' }
 #'
 #' @details
@@ -25,35 +27,34 @@
 #' @rdname INTERNAL_update_lasso
 .update_lasso <- function(click, previous=NULL, tol=0.01) {
     new_lasso <- list(
-        lasso=NULL, closed=FALSE, panelvar1=click$panelvar1,
-        panelvar2=click$panelvar2, mapping=click$mapping)
+        coord=cbind(click$x, click$y), closed=FALSE, 
+        panelvar1=click$panelvar1, panelvar2=click$panelvar2, mapping=click$mapping, 
+        css=cbind(click$coords_css$x, click$coords_css$y)
+    )
 
     if (length(previous)) {
-        # Closing the lasso if you click close to the starting point, within the same facet.
-        xrange <- click$domain$right - click$domain$left
-        yrange <- click$domain$top - click$domain$bottom
+        # Checking we're in the same facet as any previous waypoints (both can be NULL).
+        same.panel <- identical(previous$panelvar1, click$panelvar1) && 
+            identical(previous$panelvar2, click$panelvar2)
 
-        if (abs(click$x - previous$coord[1,1]) < xrange * tol
-            && abs(click$y - previous$coord[1,2]) < yrange * tol
-            && identical(previous$panelvar1, click$panelvar1) # okay for both to be NULL.
-            && identical(previous$panelvar2, click$panelvar2)
-        ) {
-            new_lasso$coord <- rbind(previous$coord, previous$coord[1,])
-            new_lasso$closed <- TRUE
-        } else {
-            # Adding a waypoint, but only to an existing open lasso, otherwise using NULL.
-            if (!previous$closed
-                && identical(previous$panelvar1, click$panelvar1)
-                && identical(previous$panelvar2, click$panelvar2) ) {
-                new_lasso$coord <- previous$coord
+        if (same.panel) {
+            # Closing the lasso if you click close to the starting point, within the same facet.
+            xrange <- click$domain$right - click$domain$left
+            yrange <- click$domain$top - click$domain$bottom
+
+            last <- previous$coord[1,]
+            if (abs(click$x - last[1]) < xrange * tol && abs(click$y - last[2]) < yrange * tol) {
+                new_lasso$coord <- rbind(previous$coord, last)
+                new_lasso$css <- rbind(previous$css, previous$css[1,])
+                new_lasso$closed <- TRUE
+            } else {
+                new_lasso$coord <- rbind(previous$coord, new_lasso$coord)
+                new_lasso$css <- rbind(previous$css, new_lasso$css)
             }
-            new_lasso$coord <- rbind(new_lasso$coord, c(click$x, click$y))
         }
-    } else {
-        new_lasso$coord <- cbind(click$x, click$y)
-    }
+    } 
 
-    return(new_lasso)
+    new_lasso
 }
 
 #' Is the object a closed lasso or Shiny brush?
@@ -63,9 +64,14 @@
 #'
 #' @param x A lasso or Shiny brush object.
 #'
-#' @return A logical scalar specifying if \code{x} is a closed lasso or Shiny brush.
+#' @return A logical scalar specifying if \code{x} is a open/closed lasso or Shiny brush.
 #'
 #' @author Aaron Lun
+#' @rdname INTERNAL_is_lasso
+.is_open_lasso <- function(x) {
+    isFALSE(x$closed)
+}
+
 #' @rdname INTERNAL_is_lasso
 .is_closed_lasso <- function(x) {
     isTRUE(x$closed)

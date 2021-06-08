@@ -90,6 +90,7 @@
     brush_field <- paste0(plot_name, "_", .brushField)
     dimprop_name <- paste0(plot_name, "_", .propagateDimnames)
     save_field <- paste0(plot_name, "_", .multiSelectSave)
+    lasso_flag <- paste0(plot_name, "_", .flagDotPlotLassoUpdate)
 
     # nocov start
     observeEvent(input[[click_field]], {
@@ -106,22 +107,19 @@
 
         # Don't add to waypoints if a Shiny brush exists in memory, but instead, destroy the brush.
         # Also destroy any closed lassos, or update open lassos.
-        reactivated <- FALSE
+        reactivated <- TRUE
         prev_lasso <- slot(pObjects$memory[[plot_name]], .brushData)
-        if (.is_brush(prev_lasso)) {
+        if (.is_brush(prev_lasso) || .is_closed_lasso(prev_lasso)) {
             new_lasso <- list()
-            reactivated <- TRUE
-        } else if (.is_closed_lasso(prev_lasso)) {
-            new_lasso <- list()
-            reactivated <- TRUE
         } else {
             new_lasso <- .update_lasso(input[[click_field]], prev_lasso)
-            if (new_lasso$closed) {
-                reactivated <- TRUE
+            if (!new_lasso$closed) {
+                reactivated <- FALSE
             }
         }
 
         slot(pObjects$memory[[plot_name]], .brushData) <- new_lasso
+        .safe_reactive_bump(rObjects, lasso_flag)
 
         .disableButtonIf(
             save_field,
@@ -132,10 +130,104 @@
         if (reactivated) {
             .requestActiveSelectionUpdate(plot_name, session, pObjects, rObjects)
             .safe_reactive_bump(rObjects, dimprop_name)
-        } else {
-            .requestUpdate(plot_name, rObjects)
         }
     }, ignoreInit=TRUE)
+    # nocov end
+
+    # nocov start
+    observe({ 
+        force(rObjects$rerendered)
+        force(rObjects[[lasso_flag]])
+
+        instance <- pObjects$memory[[plot_name]]
+        curbrush <- slot(instance, .brushData)
+
+        lasso_id <- paste0(plot_name, "_iSEE_INTERNAL_lasso_spots")
+        removeUI(paste0("#", lasso_id))
+
+        # Adding the lasso waypoints.
+        if (.is_open_lasso(curbrush)) {
+            RADIUS <- 10
+            style_args <- c(position="absolute",
+                `z-index`=100,
+                height=paste0(RADIUS, "px"),
+                width=paste0(RADIUS, "px")
+            )
+
+            # Adding the spots.
+            spots <- vector("list", nrow(curbrush$css))
+            for (i in seq_along(spots)) {
+                tmp <- c(
+                    style_args,
+                    left=paste0(curbrush$css[i,1] - RADIUS/2, "px"),
+                    top=paste0(curbrush$css[i,2] - RADIUS/2, "px")
+                )
+
+                if (i==1L) {
+                    tmp <- c(tmp,
+                        border=paste("2px", "solid", .panelColor(instance)),
+                        `background-color`="white"
+                    )
+                } else {
+                    tmp <- c(tmp,
+                        `background-color`=.panelColor(instance),
+                        `border-radius`="50%"
+                    )
+                }
+
+                style_str <- sprintf("%s:%s;", names(tmp), tmp)
+                spots[[i]] <- span(style=paste(style_str, collapse=" "))
+            }
+
+            # Adding the lines.
+            lines <- vector("list", nrow(curbrush$css)-1L)
+            for (i in seq_along(lines)) {
+                prevx <- curbrush$css[i,1]
+                prevy <- curbrush$css[i,2]
+                nextx <- curbrush$css[i+1,1]
+                nexty <- curbrush$css[i+1,2]
+
+                height <- nexty - prevy
+                width <- nextx - prevx
+                angle <- atan(height/width)
+                angle <- angle / pi * 180
+                transform <- sprintf("rotate(%sdeg)", angle)
+
+                LWD <- 2
+                len <- sqrt(height^2 + width^2)
+                style_args <- c(position="absolute",
+                    `z-index`=100,
+                    top=paste0((prevy + nexty)/2 - LWD/2, "px"),
+                    left=paste0((prevx + nextx)/2 - len/2, "px"),
+                    width=paste0(len, "px"),
+                    height=paste0(LWD, "px"), 
+                    `background-color`=.panelColor(instance),
+                    `-moz-transform`=transform,
+                    `-webkit-transform`=transform,
+                    transform=transform,
+                    `transform-origin`="center center"
+                 )
+
+                style_str <- sprintf("%s:%s;", names(style_args), style_args)
+                lines[[i]] <- span(style=paste(style_str, collapse=" "))
+            }
+
+            insertUI(paste0("#", plot_name), where="beforeEnd", 
+                div(id=lasso_id, do.call(tagList, lines), do.call(tagList, spots)))
+        }
+    })
+    # nocov end
+
+    # nocov start
+    observeEvent(input$iSEE_window_resize, {
+        instance <- pObjects$memory[[plot_name]]
+        curbrush <- slot(instance, .brushData)
+        lasso_id <- paste0(plot_name, "_iSEE_INTERNAL_lasso_spots")
+        if (.is_open_lasso(curbrush)) {
+            removeUI(paste0("#", lasso_id))
+            slot(pObjects$memory[[plot_name]], .brushData) <- list()
+        }
+    })
     # nocov end
 
     invisible(NULL)

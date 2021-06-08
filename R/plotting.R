@@ -1104,10 +1104,12 @@ plot.data$jitteredY <- j.out$Y;", groupvar)
             draw_cmd <- .draw_brush(plot_name, param_choices, index=i,
                 flip=flip, facet_row=facet_row, facet_column=facet_column,
                 stroke_color=stroke_color, fill_color=fill_color)
-        } else {
+        } else if (.is_closed_lasso(chosen)) {
             draw_cmd <- .draw_lasso(plot_name, param_choices, index=i,
                 facet_row=facet_row, facet_column=facet_column,
                 stroke_color=stroke_color, fill_color=fill_color)
+        } else {
+            draw_cmd <- NULL
         }
 
         cmds <- c(cmds, draw_cmd)
@@ -1197,18 +1199,11 @@ plot.data$jitteredY <- j.out$Y;", groupvar)
 #' @param stroke_color String containing the color to use for the lasso stroke.
 #' @param fill_color String containing the color to use for the fill of the closed lasso.
 #'
-#' @return A character vector containing commands to overlay a point, path or polygon, indicating the position of any active or saved lassos.
+#' @return A character vector containing commands to overlay a polygon for a closed lasso.
 #'
 #' @details
-#' This function will generate commands to add a point to the plot, if there is only one lasso waypoint defined;
-#' a path, if multiple waypoints are defined but the lasso is not yet closed;
-#' or a polygon, if multiple waypoints are defined for a closed lasso.
-#'
-#' The starting point of open lassos is distinguished from the waypoints using a shape aesthetic;
-#' with one exception, if the shape aesthetic is already being mapped to a covariate for data points,
-#' then lasso points switch to the size aesthetic.
-#'
-#' Evaluation of the output commands require:
+#' This function will generate commands to add a filled polygon based on the waypoints defined for a closed lasso.
+#' Evaluation of the output commands requires:
 #' \itemize{
 #' \item a list object called \code{all_active} where each entry is named by the plot name.
 #' The entry corresponding to the current plot should contain the contents of \code{.lassoData} in \code{param_choices}.
@@ -1251,89 +1246,34 @@ plot.data$jitteredY <- j.out$Y;", groupvar)
         lasso_data <- paste(lasso_data, panel_data, sep=", ")
     }
 
-    if (identical(nrow(current$coord), 1L)) { # lasso has only a start point
-        point_cmd <- sprintf(
-"geom_point(aes(x=%s, y=%s),
-    data=data.frame(%s),
-    inherit.aes=FALSE, alpha=1, stroke=1, color='%s', shape=%s)",
-            current$mapping$x, current$mapping$y, lasso_data, stroke_color, .lassoStartShape)
-        full_cmd_list <- point_cmd
-
-    } else if (current$closed){ # lasso is closed
-        polygon_cmd <- sprintf(
+    polygon_cmd <- sprintf(
 "geom_polygon(aes(x=%s, y=%s), alpha=%s, color='%s',
     data=data.frame(%s),
     inherit.aes=FALSE, fill='%s')",
-            current$mapping$x, current$mapping$y,
-            .brushFillOpacity, stroke_color,
-            lasso_data, fill_color)
+        current$mapping$x, current$mapping$y,
+        .brushFillOpacity, stroke_color,
+        lasso_data, fill_color)
 
-        # Put a number for saved lassos.
-        if (index!=0L) {
-            text_data <- c(sprintf("X=mean(%s$coord[, 1])", lasso_src),
-                sprintf("Y=mean(%s$coord[, 2])", lasso_src),
-                addPanels)
+    # Put a number for saved lassos.
+    if (index!=0L) {
+        text_data <- c(sprintf("X=mean(%s$coord[, 1])", lasso_src),
+            sprintf("Y=mean(%s$coord[, 2])", lasso_src),
+            addPanels)
 
-            text_cmd <- sprintf(
+        text_cmd <- sprintf(
 "geom_text(aes(x=%s, y=%s), inherit.aes=FALSE,
-    data=data.frame(
-        %s),
-    label=%i, size=%s, colour='%s')",
-                current$mapping$x, current$mapping$y,
-                paste(text_data, collapse=",\n        "),
-                index, 
-                slot(param_choices, .plotFontSize) * .plotFontSizeLegendTextDefault, 
-                stroke_color)
-
-            polygon_cmd <- c(polygon_cmd, text_cmd)
-        }
-
-        full_cmd_list <- polygon_cmd
-
-    } else { # lasso is still open
-        path_cmd <- sprintf(
-"geom_path(aes(x=%s, y=%s),
     data=data.frame(%s),
-    inherit.aes=FALSE, alpha=1, color='%s', linetype='longdash')",
-            current$mapping$x, current$mapping$y, lasso_data, stroke_color)
+    label=%i, size=%s, colour='%s')",
+            current$mapping$x, current$mapping$y,
+            paste(text_data, collapse=",\n        "),
+            index, 
+            slot(param_choices, .plotFontSize) * .plotFontSizeLegendTextDefault, 
+            stroke_color)
 
-        # Do not control the shape of waypoints if shape is already being mapped to a covariate
-        if (slot(param_choices, .shapeByField) == .shapeByNothingTitle) {
-            point_cmd <- sprintf(
-"geom_point(aes(x=%s, y=%s, shape=First),
-    data=data.frame(%s,
-        First=seq_len(nrow(%s$coord)) == 1L),
-    inherit.aes=FALSE, alpha=1, stroke=1, color='%s')",
-                current$mapping$x, current$mapping$y,
-                lasso_data, lasso_src, stroke_color)
-
-            scale_shape_cmd <- sprintf(
-                "scale_shape_manual(values=c('TRUE'=%s, 'FALSE'=%s))",
-                .lassoStartShape, .lassoWaypointShape
-            )
-
-            guides_cmd <- "guides(shape='none')"
-        } else {
-            point_cmd <- sprintf(
-"geom_point(aes(x=%s, y=%s, size=First),
-    data=data.frame(%s,
-        First=seq_len(nrow(%s$coord)) == 1L),
-    inherit.aes=FALSE, alpha=1, stroke=1, shape=%s, color='%s')",
-                current$mapping$x, current$mapping$y,
-                lasso_data, lasso_src, .lassoStartShape, stroke_color)
-
-            scale_shape_cmd <- sprintf(
-                "scale_size_manual(values=c('TRUE'=%s, 'FALSE'=%s))",
-                .lassoStartSize, .lassoWaypointSize
-            )
-
-            guides_cmd <- "guides(size='none')"
-        }
-
-        full_cmd_list <- c(path_cmd, point_cmd, scale_shape_cmd, guides_cmd)
+        polygon_cmd <- c(polygon_cmd, text_cmd)
     }
 
-    full_cmd_list
+    polygon_cmd
 }
 
 #' Add multiple selection plotting commands
